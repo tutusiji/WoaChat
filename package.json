@@ -1,0 +1,38 @@
+{
+  "name": "woachat",
+  "version": "1.0.0",
+  "description": "Yundoc Chat Notifier application",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "build": {
+    "appId": "com.yourapp.yundoc",
+    "productName": "WoaChat",
+    "files": [
+      "**/*"
+    ],
+    "win": {
+      "icon": "icon.ico"
+    },
+    "mac": {
+      "icon": "icon.icns"
+    },
+    "linux": {
+      "icon": "icon.png"
+    }
+  },
+  "keywords": [],
+  "author": "tutu",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^25.2.0",
+    "electron-builder": "^25.1.7"
+  },
+  "dependencies": {
+    "node-notifier": "^10.0.1",
+    "sharp": "^0.33.5"
+  }
+}
