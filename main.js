@@ -1,28 +1,32 @@
+// main.js
+
 const {
   app,
   BrowserWindow,
-  session,
   ipcMain,
   Tray,
   Menu,
+  session,
 } = require("electron");
-const notifier = require("node-notifier");
 const path = require("path");
-const sharp = require("sharp");
+const notifier = require("node-notifier");
 
 let mainWindow;
-let tray = null; // 托盘图标变量
+let notificationWindow;
+let tray = null;
 let reqId = "";
-let flashInterval = null; // 闪烁间隔变量
-let messageCount = 0; // 新消息数量
+let messageCount = 0;
+let didFinishLoad = false;
 
-async function createWindow() {
+// 创建主应用窗口
+function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 780,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      preload: path.join(__dirname, "preload.js"), // 或 notificationPreload.js
+      contextIsolation: true,
+      nodeIntegration: false,
     },
     icon: path.join(__dirname, "icon.ico"), // 自定义图标
   });
@@ -30,30 +34,22 @@ async function createWindow() {
   // 加载聊天页面的 URL
   mainWindow.loadURL("https://woa.wps.cn/im/messages#/");
 
-  // 使用 webRequest 拦截 WebSocket 请求
+  // 使用 webRequest 拦截 WebSocket 请求，提取 req_id
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     if (details.url.startsWith("wss://woa.wps.cn/sub")) {
       console.log("Intercepted WebSocket URL:", details.url);
-      const url = new URL(details.url);
-      reqId = url.searchParams.get("req_id"); // 提取出 req_id
+      const urlObj = new URL(details.url);
+      reqId = urlObj.searchParams.get("req_id"); // 提取出 req_id
       console.log("Extracted req_id:", reqId);
+      injectWebSocketScript(); // 尝试注入 WebSocket 脚本
     }
     callback({});
   });
 
-  // 在页面加载完成后建立 WebSocket 连接
+  // 在页面加载完成后
   mainWindow.webContents.on("did-finish-load", () => {
-    if (reqId) {
-      mainWindow.webContents.executeJavaScript(`
-        const socket = new WebSocket('wss://woa.wps.cn/sub?req_id=${reqId}');
-        socket.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          if (data && data.type === 'new_message') {
-            require('electron').ipcRenderer.send('new-message', data.message);
-          }
-        };
-      `);
-    }
+    didFinishLoad = true;
+    injectWebSocketScript(); // 尝试注入 WebSocket 脚本
   });
 
   // 初始化托盘图标
@@ -70,51 +66,108 @@ async function createWindow() {
     mainWindow.show();
   });
 
-  // 当用户查看窗口时，停止任务栏闪烁并恢复托盘图标
+  // 当用户查看窗口时，重置消息计数
   mainWindow.on("focus", () => {
     messageCount = 0; // 重置消息计数
-    tray.setImage(path.join(__dirname, "tray-icon.png")); // 恢复托盘图标
-    mainWindow.setIcon(path.join(__dirname, "icon.ico")); // 恢复任务栏图标
-    if (flashInterval) {
-      clearInterval(flashInterval);
-      flashInterval = null;
-    }
   });
 }
 
-// 生成带有新消息数量徽章的图标
-async function generateBadgeIcon(count) {
-  const originalIconPath = path.join(__dirname, "icon.ico");
-  const outputPath = path.join(__dirname, "icon-badge.png");
+// 创建通知窗口（仅在有新消息时创建）
+function createNotificationWindow() {
+  if (notificationWindow) {
+    console.log("Notification window already exists.");
+    return;
+  }
 
-  await sharp(originalIconPath)
-    .composite([
-      {
-        input: Buffer.from(
-          `<svg width="64" height="64">
-            <circle cx="48" cy="16" r="16" fill="red" />
-            <text x="48" y="21" font-size="16" fill="white" text-anchor="middle" font-family="Arial" font-weight="bold">${count}</text>
-          </svg>`
-        ),
-        top: 0,
-        left: 0,
-      },
-    ])
-    .toFile(outputPath);
+  console.log("Creating notification window.");
+  notificationWindow = new BrowserWindow({
+    width: 300,
+    height: 400,
+    x: 100,
+    y: 100,
+    frame: true, // 显示窗口边框和标题栏
+    resizable: true,
+    webPreferences: {
+      preload: path.join(__dirname, "notificationPreload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
 
-  return outputPath;
+  notificationWindow
+    .loadFile("notification.html")
+    .then(() => {
+      console.log(
+        "Notification window loaded 'notification.html' successfully."
+      );
+      // 显示窗口
+      notificationWindow.show();
+      notificationWindow.focus();
+    })
+    .catch((error) => {
+      console.error("Failed to load 'notification.html':", error);
+    });
+
+  notificationWindow.on("closed", () => {
+    console.log("Notification window closed.");
+    notificationWindow = null;
+  });
+}
+
+let scriptInjected = false;
+
+// 注入 WebSocket 脚本的函数
+function injectWebSocketScript() {
+  if (reqId && didFinishLoad && !scriptInjected) {
+    scriptInjected = true;
+    console.log("Injecting WebSocket script with reqId:", reqId);
+    mainWindow.webContents
+      .executeJavaScript(
+        `
+  console.log('Injected script is running.');
+  const socket = new WebSocket('wss://woa.wps.cn/sub?req_id=${reqId}');
+  socket.onopen = () => {
+    console.log('WebSocket connection opened.');
+  };
+  socket.onmessage = (event) => {
+    console.log('WebSocket message received:', event.data);
+    const data = JSON.parse(event.data);
+    if (data && data.type === 'new_message') {
+      console.log('Received new message:', data);
+      const message = {
+        sender: data.sender_name || '未知发送者',
+        content: data.message,
+      };
+      console.log('Sending message via electronAPI:', message);
+      window.electronAPI.sendNewMessage(JSON.stringify(message)); // 使用 JSON.stringify
+    }
+  };
+  socket.onerror = (error) => {
+    console.error('WebSocket error:', error);
+  };
+`
+      )
+      .then(() => {
+        console.log("Injected script executed successfully.");
+      })
+      .catch((error) => {
+        console.error("Error executing injected script:", error);
+      });
+  }
 }
 
 // 监听新消息的事件
+// 监听新消息的事件
 ipcMain.on("new-message", async (event, message) => {
-  if (mainWindow) {
-    messageCount++;
+  try {
+    const msg = JSON.parse(message);
+    console.log("Received new-message event with message:", msg);
 
-    // 使用 node-notifier 显示系统通知
+    // 显示系统通知
     notifier.notify(
       {
         title: "新消息提醒",
-        message: message,
+        message: msg.content,
         icon: path.join(__dirname, "icon.ico"), // 自定义图标
         sound: true, // 启用声音
         wait: true, // 等待用户点击
@@ -127,31 +180,41 @@ ipcMain.on("new-message", async (event, message) => {
       }
     );
 
-    // 生成带有徽章的任务栏图标
-    const badgeIconPath = await generateBadgeIcon(messageCount);
-    mainWindow.setIcon(badgeIconPath); // 更改任务栏图标为带有徽章的图标
-
-    // 更改托盘图标（可选择不同图标表示有新消息）
-    tray.setImage(path.join(__dirname, "tray-icon-new-message.png"));
-
-    let showOriginalIcon = true;
-    if (!flashInterval) {
-      flashInterval = setInterval(() => {
-        if (showOriginalIcon) {
-          tray.setImage(path.join(__dirname, "tray-icon-new-message.png"));
-        } else {
-          tray.setImage(path.join(__dirname, "tray-icon.png"));
-        }
-        showOriginalIcon = !showOriginalIcon;
-      }, 500); // 每 500 毫秒切换一次图标
+    // 如果通知窗口不存在，则创建并显示
+    if (!notificationWindow) {
+      console.log("Notification window does not exist. Creating one.");
+      createNotificationWindow();
+    } else {
+      console.log("Notification window already exists.");
+      notificationWindow.show();
+      notificationWindow.focus();
     }
+
+    // 发送新消息到通知窗口
+    console.log("Sending 'update-message' to notification window.");
+    notificationWindow.webContents.send("update-message", message);
+  } catch (error) {
+    console.error("Error parsing message:", error);
   }
 });
 
-app.on("ready", createWindow);
+// 应用程序准备就绪时
+app.on("ready", () => {
+  createWindow();
+  createNotificationWindow(); // 应用启动时创建通知窗口
+});
 
+// 所有窗口关闭时
 app.on("window-all-closed", () => {
+  // 保持应用程序在所有窗口关闭后仍然运行（除非在 macOS 上）
   if (process.platform !== "darwin") {
     app.quit();
+  }
+});
+
+// 应用程序被激活时（通常用于 macOS）
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
   }
 });

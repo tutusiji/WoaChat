@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>通知窗口</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        background-color: #f0f0f0;
+        font-family: Arial, sans-serif;
+      }
+      #title-bar {
+        width: 100%;
+        height: 30px;
+        background-color: #4caf50;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 10px;
+        box-sizing: border-box;
+      }
+      #close-button {
+        background: none;
+        border: none;
+        font-size: 16px;
+        color: white;
+        cursor: pointer;
+      }
+      #message-list {
+        padding: 10px;
+        max-height: 360px; /* 总高度 - 标题栏高度 */
+        overflow-y: auto;
+      }
+      .message-item {
+        background-color: #ffffff;
+        padding: 10px;
+        margin-bottom: 10px;
+        border-radius: 5px;
+      }
+      .message-item:last-child {
+        margin-bottom: 0;
+      }
+      .message-sender {
+        font-weight: bold;
+        margin-bottom: 5px;
+      }
+      .message-content {
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="title-bar">
+      <span>消息通知</span>
+      <button id="close-button">×</button>
+    </div>
+    <div id="message-list"></div>
+    <script>
+      // 使用预加载脚本中暴露的 API
+      const electronAPI = window.electronAPI;
+
+      // 从 localStorage 中加载消息列表
+      let messages = JSON.parse(localStorage.getItem("messages")) || [];
+
+      // 最大消息数量
+      const MAX_MESSAGES = 20;
+
+      // 渲染消息列表
+      function renderMessages() {
+        const messageList = document.getElementById("message-list");
+        messageList.innerHTML = ""; // 清空列表
+
+        // 反向遍历消息列表，老的在上，新在下
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          const item = document.createElement("div");
+          item.className = "message-item";
+
+          const sender = document.createElement("div");
+          sender.className = "message-sender";
+          sender.innerText = msg.sender;
+
+          const content = document.createElement("div");
+          content.className = "message-content";
+          content.innerText = msg.content;
+
+          item.appendChild(sender);
+          item.appendChild(content);
+
+          messageList.appendChild(item);
+        }
+      }
+
+      // 接收主进程发送的消息并更新内容
+      electronAPI.onUpdateMessage((event, message) => {
+        console.log('Received "update-message" event with message:', message);
+        const msg = JSON.parse(message);
+
+        // 添加新消息到列表
+        messages.push(msg);
+
+        // 超过最大消息数量时，删除最早的消息
+        if (messages.length > MAX_MESSAGES) {
+          messages.shift();
+        }
+
+        // 将消息列表保存到 localStorage
+        localStorage.setItem("messages", JSON.stringify(messages));
+
+        // 重新渲染消息列表
+        renderMessages();
+
+        // 显示通知窗口
+        window.focus();
+      });
+
+      // 关闭按钮事件
+      document.getElementById("close-button").addEventListener("click", () => {
+        electronAPI.closeWindow();
+      });
+
+      // 初始化时渲染消息列表
+      renderMessages();
+    </script>
+  </body>
+</html>

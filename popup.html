@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>新消息提醒</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 10px;
+        margin: 0;
+        background-color: rgba(240, 240, 240, 0.9);
+        border-radius: 5px;
+        overflow: hidden;
+        -webkit-app-region: drag;
+        user-select: none;
+      }
+      #message {
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="message">您有 <span id="count">0</span> 条新消息</div>
+    <script>
+      const { ipcRenderer } = require("electron");
+      const countElement = document.getElementById("count");
+
+      ipcRenderer.on("update-message-count", (event, count) => {
+        console.log("Received message count:", count);
+        countElement.textContent = count;
+      });
+    </script>
+  </body>
+</html>
